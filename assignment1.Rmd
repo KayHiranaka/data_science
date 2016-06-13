@@ -1,0 +1,144 @@
+---
+title: "Essentials of Data Science bootcamp assignment 1"
+author: "Kay Hiranaka"
+date: "February 6, 2016"
+output: html_document
+---
+
+<!-- ignore comment -->
+## Assignment 1 : Grade Calculator##
+
+For the first assignment, I calculated grades for a physics course. This course has two parts: lecture and lab. The lab part is divided into two sections (groups). Separate data tables were supplied for each lab section and lecture. The lecture is worth 85% of the final grade, and the lab is worth 15%. I calculated grades for lab and lecture separately, then combined them by the student ID number. 
+
+### Lecture Grade ###
+The lecture data table contains grades for two midterm and a final exams. The final is worth 45% of the lecture grade, the lowest midterm is worth 20%, and the highest midterm is 35%. The code chunk below shows how I computed lecture grades.
+
+First I read the lecture grade sheet.
+```{r, message=F }
+library(xlsx)
+library(dplyr)
+
+lec <- read.xlsx('project1_data/lecture.xlsx',1)
+
+lecw <- data.frame(ID = 1:32, MT1 = lec$MT1, MT2 = lec$MT2, final = lec$Final) #working data frame
+```
+
+Then, I calculate midterm grades based on how they did on each midterm.
+```{r}
+mtfrac1 <- 0.2*lecw[lecw$MT1 <= lecw$MT2, 'MT1'] + 0.35*lecw[lecw$MT1 <= lecw$MT2, 'MT2'] #midterm grade if midterm1<=midterm2
+mtfrac2 <- 0.2*lecw[lecw$MT2 < lecw$MT1, 'MT2'] + 0.35*lecw[lecw$MT2 < lecw$MT1, 'MT1'] # midterm grade if midterm1>midterm2
+
+```
+
+I sort ID, final score, and midterm scores by whether they did better on midterm 1 or midterm 2.
+```{r}
+id <- c(lecw[lecw$MT1 <= lecw$MT2,'ID'],lecw[lecw$MT1 > lecw$MT2,'ID'])
+final <- c(lecw[lecw$MT1 <= lecw$MT2,'final'],lecw[lecw$MT1 > lecw$MT2,'final'])
+mt1 <- c(MT1 = lecw[lecw$MT1 <= lecw$MT2,'MT1'],MT1 = lecw[lecw$MT1 > lecw$MT2,'MT1']) #lowest midterm
+mt2 <- c(MT2 = lecw[lecw$MT1 <= lecw$MT2,'MT2'],MT2 = lecw[lecw$MT1 > lecw$MT2,'MT2']) #highest midterm
+
+```
+
+Make a new sorted data frame and add midterm grade.
+```{r}
+lecww <- data.frame(ID=id,MT1=mt1,MT2=mt2,final=final)
+MTfrac = c(mtfrac1,mtfrac2)
+lecww <- mutate(lecww, MTfrac = c(mtfrac1,mtfrac2))
+
+```
+
+Finally, calculate overall lecture grade and add it to the data frame.
+```{r}
+lecg <- MTfrac + final*0.45 #grade for lecture
+lecww <- mutate(lecww, lecgrade = MTfrac + final*0.45)
+lecww <- lecww[order(lecww$ID),] # sort by ID
+```
+
+
+### Lab Grade ###
+The lab data tables contain grades for 12 labs and quizes 1 & 2. Each quiz is worth 10% of the lab grade, and 10 best labs are worth 80%. 2 lowest labs are dropped. Here is my code chunk for lab section 12. An excel table was supplied for this section.
+
+#### Section 12 ####
+For section 12, I read the xlsx file and assign 0 to all NULL elements.
+```{r}
+library(stringr)
+#calculate lab12 grade
+lab12 <- read.xlsx('project1_data/Fall2015Lab120_Sec 1L12.xlsx',1,startRow = 8,endRow = 20)
+lab12[is.na(lab12)] <- 0 # fill in NULL
+lab12$X.FINAL.LAB.GRADE.AND.COMMENT <- NULL #drop column
+```
+
+Then calculate quiz grade based on quiz 1 and 2.
+```{r}
+quizfrac <- 0.1*5*(lab12$QUIZ.2+lab12$QUIZ.1) #calculate quiz grade
+lab12 <- mutate(lab12, quizfrac=quizfrac)
+```
+
+
+```{r}
+
+lab12w <- lab12 %>%
+  mutate(Student.s.Name = str_replace(Student.s.Name, 's','') )
+lab12w$QUIZ.1 <- NULL #drop column
+lab12w$QUIZ.2 <- NULL #drop column
+lab12w$Student.s.Name <- NULL #drop more column
+
+lab12w <- t(apply(lab12w,1,sort)) #sort remaining rows (only labs)
+lab12w <- lab12w[,-(1:2)] #drop two lowest labs
+
+labfrac <- rowSums(lab12w)/10*0.8 #calculate lab grade
+```
+
+
+Similarly, I calculated lab grades for section 9. Data was provided in an ODS table.
+
+```{r}
+library(readODS)
+#calculate lab9 grade
+lab09 <- read.ods('project1_data/Fall2015Lab120section 1L09.ods',1)
+lab09 <- lab09[-c(1:7),] #refine table
+lab09 <- lab09[-c(22:41),] #patience
+lab09 <- lab09[,-16] #getting there
+lab09[1,14] <- 'Quiz1'
+lab09[1,15] <- 'Quiz2'
+names(lab09) <- lab09[1,]
+lab09 <- lab09[-1,]
+
+lab09w <- lab09
+quizfr <- 0.1*5*(as.numeric(lab09w[,14])+as.numeric(lab09w[,15])) #calculate quiz grade
+lab9 <- data.frame(ID=1:20,quizfrac=quizfr)
+
+lab09w <- lab09w[,-c(14:15)] #drop quiz columns
+lab09w <- lab09w[,-1] #and ID
+
+lab09ww <- lab09[,1:13] 
+lab09ww <- lab09ww[,-1]
+lab09ww[lab09ww==100] <- 999 #strings are not behaving (they think 100 is small). I'm giving '100's a special treatment.
+lab09ww <- t(apply(lab09ww,1,sort)) #now sort rows
+lab09ww[lab09ww==999] <- 100 #put back 100
+lab09ww <- lab09ww[,-(1:2)] #drop two lowest lab grades
+lab09ww[lab09ww==''] <- 0 #replace blank elements with 0
+
+lab09www <- as.data.frame(lab09ww, stringsAsFactors=FALSE) #here convert strings into numeric
+for (column in 1:10) {
+  lab09www[, column] <- as.numeric(lab09www[, column])
+}
+labfr <- rowSums(lab09www)/10*0.8 #calculate lab grades
+lab09www <- mutate(lab09www,labfrac=labfr)
+
+quizf <- c(quizfr,quizfrac) #combine quiz grades from two sections
+labf <- c(labfr,labfrac) #combine lab grades
+labg <- quizf+labf #add them up
+grade <- lecg*0.85 + labg*0.15 #finally calculate final grades!
+final_grade <- data.frame(ID = 1:32, lecgrade=lecg,quizfrace=quizf, 
+                          labfrac=labf, labgrade=quizf+labf, finalgrade=grade)
+
+```
+
+Here is my final output. This table contains lab grade, lecture grade, and final grade for each student.
+
+```{r}
+read.csv('grade_table.csv')
+```
+
+

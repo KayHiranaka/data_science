@@ -1,0 +1,216 @@
+---
+title: "Barneys_full"
+author: "Kay"
+date: "March 9, 2016"
+output: html_document
+---
+
+
+```{r echo=FALSE, message=FALSE}
+library(dplyr)
+library(stringr)
+library(caret)
+library(tidyr)
+library(rattle)
+library(randomForest)
+library(party)
+```
+
+I extracted data from Barneys New York website using import.io growler. I will try to model the price of shoes based on the information on the website such as the label, style, new arrival, etc. 
+
+First, I read a file extracted from the shoe section on Barneys website. The original file has 960 rows and 17 columns.
+```{r message=FALSE}
+df <- read.csv('barneys_result_full.csv')
+names(df)
+```
+
+Here, I drop most columns and just pick the one with all the information. Many columns are duplicates of parts of this column, or url, or image name. 
+```{r message=FALSE}
+df <- as.data.frame(df$wrapdesc_contents)
+colnames(df) <- 'wrapdesc_contents'
+```
+
+Then I split the column into multiple columns. After this, I will have 960 rows and 5 columns.
+```{r message=FALSE}
+df1 <- df %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, " ", "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, "-", "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, "&", "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, ",", "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, '"', "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, "/", "")) %>%
+  mutate(wrapdesc_contents = str_replace_all(wrapdesc_contents, ";", " ")) %>%
+  separate(col=wrapdesc_contents, into=c("label", "style", "price", "comment1", "comment2", "comment3","comment4")) 
+
+```
+
+
+I check if each row has a substring 'XO', which stands for 'Exclusively Ours'. I add a column that has 'TRUE' if it has 'XO' and 'FALSE' otherwise.
+```{r}
+XO <- grepl("XO", as.character(df$wrapdesc_contents))
+df1 <- mutate(df1, comment1 = str_replace_all(comment1, 'XO',''))
+df1 <- mutate(df1, comment2 = str_replace_all(comment2, 'XO',''))
+df1 <- mutate(df1, XO = XO)
+```
+
+
+Here, I round the price to the nearest 100th. 
+```{r message=FALSE, results='hide'}
+df1$price <- round(as.numeric(df1$price), digits = -2)
+sapply(df1, levels)
+df1$comment4 <- NULL
+df1$comment3 <- NULL
+```
+
+Next, I assign the last word in style as 'style' for now (e.g. 'Platform Sandals' will be 'Sandals'). I may add other words later.
+```{r}
+styles <- gsub("(?!^)(?=[[:upper:]])", " ", df1$style, perl=T)
+df1$style <- word(styles, -1)
+#table(df1$style)
+df1$label <- as.factor(df1$label)
+df1$style <- as.factor(df1$style)
+df1$comment1 <- as.factor(df1$comment1)
+df1$comment2 <- as.factor(df1$comment2)
+
+df3 <- df1[df1$style %in% c('Sandals', 'Sneakers', 'Pumps'),]
+#df3 <- df1
+df4 <- df3[df3$label %in% c('ChristianLouboutin', 'LoefflerRandall',
+                            'Superga', 'Givenchy', 'Valentino',
+                            'Fendi', 'PierreHardy'),]
+ 
+style2 <- word(styles, -2)
+style3 <- word(styles, -3)
+df2 <- df4
+
+```
+
+```{r}
+library(gridExtra)
+grid.table(head(df1))
+
+```
+
+Now, I split the data into a training sample and a testing data set and drop any unused levels in the training and testing samples.
+```{r message=FALSE}
+set.seed(3456)
+trainIndex <- createDataPartition(df2$price, p = .8, list = FALSE)
+head(trainIndex)
+
+DFTrain <- df2[ trainIndex,]
+DFTest  <- df2[-trainIndex,]
+
+DFTest <- droplevels(DFTest)
+DFTrain <- droplevels(DFTrain)
+```
+
+
+First, I use the decision tree to build a model.
+```{r message=FALSE, results='hide'}
+rtGrid = expand.grid(cp=seq(0.01, 0.2, by = 0.005))
+ctrl <- trainControl(method = "cv", number = 10, verboseIter = T)
+
+rtTune <- train(price ~ ., data = DFTrain,   
+                  method = "rpart", 
+                  tuneGrid = rtGrid, 
+                  trControl = ctrl
+                )
+
+rtTune
+```
+
+Now plot the result and the best cp value. I use fancyRpartPlot to make a fancy tree plot.
+```{r}
+plot(rtTune)
+rtTune$bestTune
+
+fancyRpartPlot(rtTune$finalModel) 
+```
+
+
+Then, I predict price using the test sample. The accuracy is quite low. I might get data from another website.
+```{r}
+#DFTest <- DFTest[-c(8,12,18),]
+#DFTest <- DFTest[-c(1,6),]
+#DFTest <- DFTest[-6,]
+#DFTest <- DFTest[-10,]
+pr_rt <- predict(rtTune, newdata = DFTest)
+pr_rt <- round(pr_rt, -2)
+rt_CM <- confusionMatrix(pr_rt, DFTest$price)
+rt_CM
+```
+
+I also try using conditional inference tree (ctree) to predict price.
+```{r }
+
+ctreeCARET <- train(price ~ ., data = DFTrain, method = "ctree")
+#plot(ctreeCARET$finalModel, 
+     #type = "simple",
+#    inner_panel=node_inner(ctreeCARET$finalModel,
+                 # short variable names
+#       pval = FALSE,                 # no p-values
+#       id = FALSE),                  # no id of node
+#    terminal_panel=node_terminal(ctreeCARET$finalModel, 
+#       abbreviate = TRUE,
+#       digits = 1,                   # few digits on numbers
+ #      fill = c("white"),            # make box white not grey
+ #      id = FALSE))
+  
+png("barney_ct.png", res=100, height=900, width=1200) 
+   plot(ctreeCARET$finalModel,
+        inner_panel=node_inner(ctreeCARET$finalModel,
+                 # short variable names
+        pval = FALSE,                 # no p-values
+        id = FALSE),                  # no id of node
+      terminal_panel=node_terminal(ctreeCARET$finalModel, 
+        abbreviate = TRUE,
+        digits = 1,                   # few digits on numbers
+        fill = c("white"),            # make box white not grey
+        id = FALSE)) 
+dev.off()
+#fancyRpartPlot(ctreeCARET)
+pr_rt <- predict(ctreeCARET, newdata = DFTest)
+pr_rt <- round(pr_rt, -2)
+rt_CM <- confusionMatrix(pr_rt, DFTest$price)
+rt_CM
+```
+![My Figure](barney_ct.png)
+
+With the CI tree, the accuracy is better than the decision tree.
+
+
+
+Below is for random forest that doesn't work.
+```{r}
+#DFTest$popularity <- as.factor(DFTest$popularity)
+DFTest$price <- as.integer(DFTest$price)
+DFTest$comment1 <- as.factor(DFTest$comment1)
+DFTest$comment2 <- as.factor(DFTest$comment2)
+DFTest$label <- as.factor(DFTest$label)
+DFTest$style <- as.factor(DFTest$style)
+df1$comment1 <- as.factor(df1$comment1)
+df1$comment2 <- as.factor(df1$comment2)
+df1$label <- as.factor(df1$label)
+df1$style <- as.factor(df1$style)
+df1$price <- as.integer(df1$price)
+#DFTrain$popularity <- as.factor(DFTrain$popularity)
+DFTrain$price <- as.integer(DFTrain$price)
+DFTrain$comment1 <- as.factor(DFTrain$comment1)
+DFTrain$comment2 <- as.factor(DFTrain$comment2)
+DFTrain$label <- as.factor(DFTrain$label)
+DFTrain$style <- as.factor(DFTrain$style)
+
+
+
+```
+
+The following does not work...
+```{r eval=FALSE}
+rfNOCARET <- randomForest(price ~ ., data=DFTrain)
+                          #, ntree=2)
+pr_rt <- predict(rfNOCARET, newdata = DFTest)
+pr_rt <- round(pr_rt, -2)
+rt_CM <- confusionMatrix(pr_rt, DFTest$price)
+rt_CM
+
+```
+

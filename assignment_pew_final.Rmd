@@ -1,0 +1,159 @@
+---
+title: "Pew Data Assignment"
+author: "Kay"
+date: "February 25, 2016"
+output: html_document
+---
+
+## Employee Satisfaction Prediction ##
+
+Based on the Pew research interview data, I predicted employee satisfaction using three different models. The original data has 177 columns and 2003 rows, and it consists of interviewee information (such as age, sex, location) and their answers to interview questions mainly regarding their jobs. For the purpose of this assignment, I have used the first 100 columns of the data. 
+
+
+```{r echo=FALSE, message=FALSE} 
+# read packages
+library(dplyr)
+library(caret)
+library(foreign)
+library(rattle)
+library(party)
+library(stringr)
+library(rpart)
+library(randomForest)
+```
+
+Here I read the data and clean it. First, I drop the columns that look irrelevant to employee satisfaction (like the interview date and ID). I only pick the columns that might be correlated with employee satisfaction.
+```{r message=FALSE}
+DF_orig <- read.spss('../assignments/assignment2/PSTJuly-06finalc.sav', to.data.frame = TRUE)
+
+DF1 <- DF_orig[,c(6:7, 9:10, 16,
+                  17:27, 36:41, 43:53, 63:82, 85:100)]
+
+```
+
+
+Employee satisfaction is in column q42. I delete the rows that have NAs in the column q42. Then I get rid of all the elements with no answer ('Don't know/Refused'). The data includes various expressions of 'Don't know/Refused', so I take care of all of them. Then I delete the columns where more than 1/4 of the elements are NAs.
+```{r message=FALSE}
+DF <- DF1[!(is.na(DF1$q42)),] # delete rows where q42 is NA
+
+DF[DF=='Don’t know/Refused (VOL.—DO NOT READ)'] <- NA  
+DF[DF=='Don’t know/Refused (VOL.--DO NOT READ)'] <- NA 
+DF[DF=='Don’t know/Refused'] <- NA
+DF[DF=='Don’t know/Refused (VOL.)'] <- NA
+DF[DF=="Don't know/Refused (VOL.—DO NOT READ)"] <- NA
+DF[DF=="Don't know/Refused"] <- NA
+DF[DF=="Don’t know/Refused (VOL. -- DO NOT READ)"] <- NA
+DF[DF=="Dont know-refused"] <- NA
+
+DF <- DF[, colSums(is.na(DF)) < nrow(DF)/4] # delete columns with a lot of NAs (more than 1/4)
+
+#head(DF)
+
+
+```
+
+
+Then I also omit all NAs and delete some more columns that have a lot of blank elements.
+```{r message=FALSE}
+
+DF3 <- na.omit(DF)
+DF3[, 17] <- NULL
+DF3[, 31] <- NULL
+
+
+```
+
+Finally, I drop any column with less than 2 factor levels (0 or 1). I use droplevels to drop unused levels, then manually delete columns with NULL or just one level. 
+```{r message=FALSE, results="hide"}
+lapply(DF3, as.factor)
+DF4 <- droplevels(DF3)
+
+#sapply(DF4, levels)
+DF4$q36=DF4$q29=DF4$q2=DF4$q3=DF4$q4=DF4$q8 <- NULL
+
+```
+
+
+Now that I'm done with cleaning and processing the data, the new data set has 39 columns and 569 rows.
+I split the data into a training sample to build my model, and a separate testing data set to validate and test my model. 80% of the data is used for training and 20% for testing.
+```{r message=FALSE,results="hide"}
+set.seed(3456)
+trainIndex <- createDataPartition(DF4$q42, p = .8, list = FALSE)
+head(trainIndex)
+
+DFTrain <- DF4[ trainIndex,]
+DFTest  <- DF4[-trainIndex,]
+
+```
+
+I choose to build my model using three approaches: decision tree, conditional inference tree, and random forest. 
+First I use decision tree (rpart).
+```{r message=FALSE, results="hide"}
+rtGrid = expand.grid(cp=seq(0.01, 0.2, by = 0.005))
+ctrl <- trainControl(method = "cv", number = 10, verboseIter = T)
+
+rtTune <- train(q42 ~ ., data = DFTrain,   
+                  method = "rpart", 
+                  tuneGrid = rtGrid, 
+                  trControl = ctrl
+                )
+
+rtTune
+
+
+```
+
+Now plot the result and the best cp value. I use fancyRpartPlot to make a fancy tree plot.
+```{r}
+plot(rtTune)
+rtTune$bestTune
+
+fancyRpartPlot(rtTune$finalModel) 
+```
+
+
+Now I predict employee satisfaction from the test sample using the decision tree model.
+```{r}
+pr_rt <- predict(rtTune, newdata = DFTest)
+rt_CM <- confusionMatrix(pr_rt, DFTest$q42)
+rt_CM
+```
+With this model, I have accuracy of 58% :(
+
+
+Next, I use conditional inference tree (ctree) to predict employee satisfaction. 
+```{r}
+ctreeCARET <- train(q42 ~ ., data = DFTrain, method = "ctree")
+plot(ctreeCARET$finalModel, type = "simple")
+pr_rt <- predict(ctreeCARET, newdata = DFTest)
+rt_CM <- confusionMatrix(pr_rt, DFTest$q42)
+rt_CM
+```
+With the CI tree model, I have accuracy of 61% (slightly better than decision tree).
+
+
+I also try random forest. 
+```{r}
+rfNOCARET <- randomForest(q42 ~ ., data=DFTrain)
+pr_rt <- predict(rfNOCARET, newdata = DFTest)
+rt_CM <- confusionMatrix(pr_rt, DFTest$q42)
+rt_CM
+
+```
+With the random forest model, I have accuracy of 68%, which is better than the decision tree or CI tree.
+
+Here I plot the random forest model.
+```{r}
+plot(rfNOCARET, log = "y", lwd = 2, main = "Random Forest accuracy")
+
+```
+
+And also a plot that shows the importance of the variables used in the random forest model.
+```{r}
+varImpPlot(rfNOCARET, type=2)
+```
+
+
+From the results above, the CI tree model prediction is slightly more accurate than the decision tree model, and the random forest model prediction is more accurate than both the CI tree and decision tree models.
+
+
